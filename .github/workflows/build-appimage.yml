@@ -54,9 +54,33 @@ jobs:
           # trusting the repo's file modes.
           chmod +x build/keelhaul-recipe/entrypoint.sh
 
-      - name: Build
+      # python-appimage assembles the AppDir in a private 0700 temp dir, and
+      # current appimagetool refuses to package anything other users cannot
+      # read. So stop python-appimage before packaging, fix the modes, and
+      # package with appimagetool ourselves.
+      - name: Build the AppDir
         working-directory: build
-        run: python-appimage build app -p "${{ steps.py.outputs.version }}" keelhaul-recipe -x keelhaul
+        run: |
+          python-appimage build app --no-packaging -p "${{ steps.py.outputs.version }}" keelhaul-recipe -x keelhaul
+          test -d Keelhaul-x86_64 || { echo "AppDir Keelhaul-x86_64 was not created" >&2; exit 1; }
+
+      - name: Fix AppDir permissions
+        working-directory: build
+        run: |
+          chmod -R a+rX Keelhaul-x86_64
+          chmod a+rx Keelhaul-x86_64/AppRun
+          chmod a+rx Keelhaul-x86_64/usr/bin/*
+
+      - name: Package with appimagetool
+        working-directory: build
+        env:
+          ARCH: x86_64
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ./appimagetool --no-appstream Keelhaul-x86_64 Keelhaul-x86_64.AppImage
 
       - name: Smoke test the AppImage
         working-directory: build
