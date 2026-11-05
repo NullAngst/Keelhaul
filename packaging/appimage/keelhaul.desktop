@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Keelhaul
+GenericName=Security toolkit
+Comment=LUKS2, file encryption, metadata scrub, hashes and drive wiping through trusted CLI tools
+Exec=keelhaul
+Icon=keelhaul
+Terminal=false
+Categories=System;Security;Utility;
+Keywords=luks;cryptsetup;age;gpg;mat2;exiftool;wipe;shred;hash;
