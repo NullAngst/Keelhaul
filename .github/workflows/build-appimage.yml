@@ -15,6 +15,7 @@ permissions:
 jobs:
   appimage:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -49,6 +50,9 @@ jobs:
           cp -r packaging/appimage build/keelhaul-recipe
           cp -r keelhaul build/keelhaul
           find build/keelhaul -name __pycache__ -prune -exec rm -rf {} +
+          # Web UI uploads drop the executable bit, so set it here instead of
+          # trusting the repo's file modes.
+          chmod +x build/keelhaul-recipe/entrypoint.sh
 
       - name: Build
         working-directory: build
@@ -61,7 +65,9 @@ jobs:
         run: |
           chmod +x Keelhaul-x86_64.AppImage
           ./Keelhaul-x86_64.AppImage --appimage-extract >/dev/null
-          PYTHONPATH=squashfs-root ./squashfs-root/usr/bin/python${{ steps.py.outputs.version }} -c \
+          test -x squashfs-root/AppRun || { echo "AppRun is not executable" >&2; exit 1; }
+          chmod +x squashfs-root/usr/bin/python*
+          PYTHONPATH=squashfs-root timeout 120 ./squashfs-root/usr/bin/python${{ steps.py.outputs.version }} -c \
             'import keelhaul.ui.mainwindow, keelhaul.core.escalation; print("imports ok")'
 
       - uses: actions/upload-artifact@v4

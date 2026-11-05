@@ -11,6 +11,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Nothing here should take more than a few minutes. A hung GUI gets killed.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -33,12 +35,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          python - <<'EOF'
+          timeout 300 python - <<'EOF'
           import pkgutil, importlib, keelhaul
+          # __main__ launches the app and blocks in its event loop.
+          # root_helper runs as a script under pkexec and is never imported.
+          SKIP = ("keelhaul.__main__", "keelhaul.core.root_helper")
           for m in pkgutil.walk_packages(keelhaul.__path__, "keelhaul."):
-              if m.name.endswith("root_helper"):
-                  continue  # runs as a script under pkexec, never imported
+              if m.name in SKIP:
+                  continue
               importlib.import_module(m.name)
+              print("imported", m.name, flush=True)
           from PyQt6.QtWidgets import QApplication
           from keelhaul.core import tools
           from keelhaul.core.secrets import harden_process
@@ -49,10 +55,10 @@ jobs:
           app = QApplication([])
           ctx = AppContext(tools.probe(), Settings(), Watchdog({}), {}, harden_process())
           MainWindow(ctx)
-          print("imports and window ok")
+          print("imports and window ok", flush=True)
           EOF
 
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q tests
+        run: timeout 600 python -m pytest -q tests
