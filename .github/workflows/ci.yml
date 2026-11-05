@@ -1,0 +1,58 @@
+name: CI
+
+# Lint, import smoke test and the unit tests on every push and pull request,
+# so nothing broken merges.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y age gnupg cryptsetup-bin libimage-exiftool-perl \
+            libegl1 libxkbcommon0 libgl1 libfontconfig1 libdbus-1-3
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt ruff pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Import smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python - <<'EOF'
+          import pkgutil, importlib, keelhaul
+          for m in pkgutil.walk_packages(keelhaul.__path__, "keelhaul."):
+              if m.name.endswith("root_helper"):
+                  continue  # runs as a script under pkexec, never imported
+              importlib.import_module(m.name)
+          from PyQt6.QtWidgets import QApplication
+          from keelhaul.core import tools
+          from keelhaul.core.secrets import harden_process
+          from keelhaul.core.settings import Settings
+          from keelhaul.ui.base import AppContext
+          from keelhaul.ui.mainwindow import MainWindow
+          from keelhaul.watchdog.monitor import Watchdog
+          app = QApplication([])
+          ctx = AppContext(tools.probe(), Settings(), Watchdog({}), {}, harden_process())
+          MainWindow(ctx)
+          print("imports and window ok")
+          EOF
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q tests
