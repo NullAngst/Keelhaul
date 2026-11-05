@@ -1,0 +1,77 @@
+name: Build AppImage
+
+# Builds Keelhaul-x86_64.AppImage and attaches it to the GitHub release
+# whenever a tag is pushed. Run it by hand from the Actions tab to get the
+# AppImage as a workflow artifact without making a release.
+
+on:
+  push:
+    tags: ["*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+          python -m pip install --upgrade pip python-appimage
+
+      # No pinned Python: use the newest base image python-appimage publishes.
+      - name: Pick the newest Python base image
+        id: py
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/niess/python-appimage/releases?per_page=100 | python -c '
+          import json, re, sys
+          tags = [r["tag_name"] for r in json.load(sys.stdin)]
+          vers = [tuple(map(int, m.groups())) for t in tags if (m := re.fullmatch(r"python(\d+)\.(\d+)", t))]
+          print("%d.%d" % max(vers))')
+          echo "Using Python $ver"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Stage the recipe
+        run: |
+          mkdir -p build
+          cp -r packaging/appimage build/keelhaul-recipe
+          cp -r keelhaul build/keelhaul
+          find build/keelhaul -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: Build
+        working-directory: build
+        run: python-appimage build app -p "${{ steps.py.outputs.version }}" keelhaul-recipe -x keelhaul
+
+      - name: Smoke test the AppImage
+        working-directory: build
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          chmod +x Keelhaul-x86_64.AppImage
+          ./Keelhaul-x86_64.AppImage --appimage-extract >/dev/null
+          PYTHONPATH=squashfs-root ./squashfs-root/usr/bin/python${{ steps.py.outputs.version }} -c \
+            'import keelhaul.ui.mainwindow, keelhaul.core.escalation; print("imports ok")'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Keelhaul-x86_64.AppImage
+          path: build/Keelhaul-x86_64.AppImage
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Keelhaul-x86_64.AppImage
+          generate_release_notes: true
