@@ -30,23 +30,52 @@ jobs:
           python -m pip install --upgrade pip python-appimage
 
       # No pinned Python: use the newest base image python-appimage publishes.
-      - name: Pick the newest Python base image
+      # This step also downloads that base image, so python-appimage never
+      # queries the GitHub API itself. Its own lookup is unauthenticated with
+      # no retry, and one 504 from api.github.com killed the whole build.
+      - name: Pick and download the newest Python base image
         id: py
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ver=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/repos/niess/python-appimage/releases?per_page=100 | python -c '
+          mkdir -p build
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -o build/releases.json \
+            "https://api.github.com/repos/niess/python-appimage/releases?per_page=100"
+          python3 - build/releases.json >build/pick.env <<'PY'
           import json, re, sys
-          tags = [r["tag_name"] for r in json.load(sys.stdin)]
-          vers = [tuple(map(int, m.groups())) for t in tags if (m := re.fullmatch(r"python(\d+)\.(\d+)", t))]
-          print("%d.%d" % max(vers))')
-          echo "Using Python $ver"
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          releases = json.load(open(sys.argv[1]))
+          best = None
+          for r in releases:
+              m = re.fullmatch(r"python(\d+)\.(\d+)", r["tag_name"])
+              if m and (best is None or tuple(map(int, m.groups())) > best[0]):
+                  best = (tuple(map(int, m.groups())), r)
+          if best is None:
+              sys.exit("no pythonX.Y release found")
+          (major, minor), rel = best
+          tag = "cp%d%d" % (major, minor)
+          # Same choice python-appimage makes: plain cpXY-cpXY (not the free
+          # threaded build), lowest numbered manylinux tag for x86_64.
+          pat = re.compile(r"python(\d+\.\d+\.\d+)-%s-%s-manylinux(\d+)_x86_64\.AppImage" % (tag, tag))
+          hits = [(m.group(2), m.group(1), a) for a in rel["assets"] if (m := pat.fullmatch(a["name"]))]
+          if not hits:
+              sys.exit("no %s-%s manylinux x86_64 image in %s" % (tag, tag, rel["tag_name"]))
+          _, full, asset = min(hits, key=lambda h: h[0])
+          print("version=%d.%d" % (major, minor))
+          print("full=%s" % full)
+          print("name=%s" % asset["name"])
+          print("url=%s" % asset["browser_download_url"])
+          PY
+          . build/pick.env
+          echo "Using Python $full from $name"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "build/$name" "$url"
+          chmod +x "build/$name"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=$GITHUB_WORKSPACE/build/$name" >> "$GITHUB_OUTPUT"
 
       - name: Stage the recipe
         run: |
-          mkdir -p build
           cp -r packaging/appimage build/keelhaul-recipe
           cp -r keelhaul build/keelhaul
           find build/keelhaul -name __pycache__ -prune -exec rm -rf {} +
@@ -61,7 +90,7 @@ jobs:
       - name: Build the AppDir
         working-directory: build
         run: |
-          python-appimage build app --no-packaging -p "${{ steps.py.outputs.version }}" keelhaul-recipe -x keelhaul
+          python-appimage build app --no-packaging -b "${{ steps.py.outputs.image }}" keelhaul-recipe -x keelhaul
           test -d Keelhaul-x86_64 || { echo "AppDir Keelhaul-x86_64 was not created" >&2; exit 1; }
 
       - name: Fix AppDir permissions
