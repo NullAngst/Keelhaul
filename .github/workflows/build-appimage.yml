@@ -27,6 +27,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
+          # PyQt6 wheels link against the host's GL and EGL libraries instead of
+          # bundling them. Every desktop has these, a bare runner does not, and
+          # the smoke test below cannot import QtGui without them. Same list the
+          # CI workflow installs.
+          sudo apt-get install -y libegl1 libxkbcommon0 libgl1 libfontconfig1 libdbus-1-3
           python -m pip install --upgrade pip python-appimage
 
       # No pinned Python: use the newest base image python-appimage publishes.
@@ -120,7 +125,10 @@ jobs:
           ./Keelhaul-x86_64.AppImage --appimage-extract >/dev/null
           test -x squashfs-root/AppRun || { echo "AppRun is not executable" >&2; exit 1; }
           chmod +x squashfs-root/usr/bin/python*
-          PYTHONPATH=squashfs-root timeout 120 ./squashfs-root/usr/bin/python${{ steps.py.outputs.version }} -c \
+          # -P keeps the current directory off sys.path. Without it, Python finds
+          # the staged build/keelhaul next to us first and tests that copy
+          # instead of the one inside the AppImage.
+          PYTHONPATH=squashfs-root timeout 120 ./squashfs-root/usr/bin/python${{ steps.py.outputs.version }} -P -c \
             'import keelhaul.ui.mainwindow, keelhaul.core.escalation; print("imports ok")'
 
       - uses: actions/upload-artifact@v4
