@@ -1,5 +1,14 @@
 # Changes
 
+2026.11.09 - Build fixes
+
+* The base image step now picks the exact Python base AppImage itself and downloads it, then hands it to python-appimage with -b, so python-appimage no longer calls the GitHub API on its own
+* Both the release lookup and the base image download use curl with 5 retries, so a passing 504 or rate limit from GitHub gets retried instead of failing the build
+* AppImage job installs libegl1, libgl1, libxkbcommon0, libfontconfig1 and libdbus-1-3 before the smoke test, the same list CI uses
+* Smoke test runs Python with -P, so it imports Keelhaul from inside the extracted AppImage instead of the staged copy in build/
+
+Reasons for changes: python-appimage's built-in release lookup is unauthenticated and has no retry, and a single 504 Gateway Timeout from api.github.com failed the AppImage build. After that, the smoke test failed on a missing libEGL.so.1, which PyQt6 expects from the host and the bare runner lacks. The traceback also showed it was importing the staged copy, so it was never testing the AppImage's own files.
+
 2026.11.05 - Build fixes
 
 * CI import smoke test now skips keelhaul.__main__, which launched the full app and sat in its event loop until GitHub cancelled the job after two hours
